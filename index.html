@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Simple CORS Proxy UI</title>
+    <style>
+        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 20px; }
+        label, input, button { display:block; margin:6px 0; }
+        input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
+        pre { background:#111; color:#dfe; padding:12px; overflow:auto; max-height:50vh; }
+        img { max-width:100%; height:auto; border:1px solid #ccc; display:block; margin-top:8px; }
+        .meta { font-size:90%; color:#555; margin-top:8px; }
+    </style>
+</head>
+<body>
+    <h1>Simple CORS Proxy (client)</h1>
+    <p>Enter a URL to fetch through a public CORS proxy (uses api.allorigins.win).</p>
+
+    <label for="url">Target URL</label>
+    <input id="url" type="text" placeholder="https://example.com/path" />
+
+    <button id="go">Fetch via proxy</button>
+    <div class="meta" id="status"></div>
+
+    <div id="output">
+        <pre id="textOutput" style="display:none"></pre>
+        <img id="imageOutput" style="display:none" alt="proxied image" />
+        <div id="headers" class="meta"></div>
+        <div style="margin-top:8px"><a id="openLink" target="_blank" rel="noopener">Open proxied URL in new tab</a></div>
+    </div>
+
+    <script>
+        // This is a client-side convenience proxy UI.
+        // It uses https://api.allorigins.win/raw?url= to bypass CORS on many public endpoints.
+        const btn = document.getElementById('go');
+        const input = document.getElementById('url');
+        const status = document.getElementById('status');
+        const textOutput = document.getElementById('textOutput');
+        const imageOutput = document.getElementById('imageOutput');
+        const headersEl = document.getElementById('headers');
+        const openLink = document.getElementById('openLink');
+
+        const PROXY_BASE = 'https://api.allorigins.win/raw?url=';
+
+        btn.addEventListener('click', async () => {
+            const target = input.value.trim();
+            if (!target) return status.textContent = 'Enter a target URL.';
+            if (!/^https?:\/\//i.test(target)) return status.textContent = 'URL must start with http:// or https://';
+
+            const proxied = PROXY_BASE + encodeURIComponent(target);
+            status.textContent = 'Fetching...';
+            textOutput.style.display = 'none';
+            imageOutput.style.display = 'none';
+            headersEl.textContent = '';
+            openLink.href = proxied;
+            openLink.textContent = 'Open proxied URL in new tab';
+
+            try {
+                const res = await fetch(proxied);
+                status.textContent = `HTTP ${res.status} ${res.statusText}`;
+
+                // show headers
+                const headers = [];
+                for (const [k, v] of res.headers) headers.push(`${k}: ${v}`);
+                headersEl.textContent = headers.join('\n');
+
+                const ct = res.headers.get('content-type') || '';
+                if (ct.startsWith('image/')) {
+                    // images: display via proxy URL directly (browser will request proxied binary)
+                    imageOutput.src = proxied;
+                    imageOutput.style.display = 'block';
+                    textOutput.style.display = 'none';
+                } else if (ct.includes('application/json')) {
+                    const obj = await res.json();
+                    textOutput.textContent = JSON.stringify(obj, null, 2);
+                    textOutput.style.display = 'block';
+                } else {
+                    const txt = await res.text();
+                    textOutput.textContent = txt;
+                    textOutput.style.display = 'block';
+                }
+            } catch (err) {
+                status.textContent = 'Fetch error: ' + err.message;
+            }
+        });
+
+        // quick example
+        input.value = 'https://example.com/';
+    </script>
+</body>
+</html>
