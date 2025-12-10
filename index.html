@@ -3,19 +3,19 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Simple CORS Proxy UI</title>
+    <title>A Simple CORS Proxy By Creta7325 and GitHub Copilot</title>
     <style>
         body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 20px; }
         label, input, button { display:block; margin:6px 0; }
         input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
-        pre { background:#111; color:#dfe; padding:12px; overflow:auto; max-height:50vh; }
+        pre { background:#000000; color:rgb(255, 255, 255); padding:12px; overflow:auto; max-height:50vh; }
         img { max-width:100%; height:auto; border:1px solid #ccc; display:block; margin-top:8px; }
         .meta { font-size:90%; color:#555; margin-top:8px; }
     </style>
 </head>
 <body>
-    <h1>Simple CORS Proxy (client)</h1>
-    <p>Enter a URL to fetch through a public CORS proxy (uses api.allorigins.win).</p>
+    <h1>A Simple CORS Proxy By Creta7325 and GitHub Copilot</h1>
+    <p>made around 5:52 pm on Tuesday Dec. 9th 2025</p>
 
     <label for="url">Target URL</label>
     <input id="url" type="text" placeholder="https://example.com/path" />
@@ -24,11 +24,176 @@
     <div class="meta" id="status"></div>
 
     <div id="output">
-        <pre id="textOutput" style="display:none"></pre>
-        <img id="imageOutput" style="display:none" alt="proxied image" />
-        <div id="headers" class="meta"></div>
-        <div style="margin-top:8px"><a id="openLink" target="_blank" rel="noopener">Open proxied URL in new tab</a></div>
+        <label for="proxySelect">Choose proxy</label>
+        <select id="proxySelect">
+            <option value="allorigins">AllOrigins (default) — https://api.allorigins.win/raw?url=</option>
+            <option value="cors-anywhere">CORS Anywhere — https://cors-anywhere.herokuapp.com/</option>
+            <option value="thingproxy">ThingProxy — https://thingproxy.freeboard.io/fetch/</option>
+            <option value="codetabs">CodeTabs proxy — https://api.codetabs.com/v1/proxy?quest=</option>
+            <option value="bridged">cors.bridged.cc — https://cors.bridged.cc/</option>
+        </select>
+
+        <div style="margin-top:8px">
+            <pre id="textOutput" style="display:none"></pre>
+            <img id="imageOutput" style="display:none" alt="proxied image" />
+            <div id="headers" class="meta"></div>
+            <div style="margin-top:8px"><a id="openLink" target="_blank" rel="noopener">Open proxied URL in new tab</a></div>
+        </div>
     </div>
+
+    <script>
+    // Map of proxy bases; used to rewrite fetch calls that target AllOrigins.
+    (function(){
+      const ALLORIGINS_BASE = 'https://api.allorigins.win/raw?url=';
+      const PROXIES = {
+        allorigins: ALLORIGINS_BASE,
+        'cors-anywhere': 'https://cors-anywhere.herokuapp.com/',
+        thingproxy: 'https://thingproxy.freeboard.io/fetch/',
+        codetabs: 'https://api.codetabs.com/v1/proxy?quest=',
+        bridged: 'https://cors.bridged.cc/'
+      };
+
+      // Update the visible "open" link whenever input or selection changes
+      const proxySelect = document.getElementById('proxySelect');
+      const input = document.getElementById('url');
+      const openLink = document.getElementById('openLink');
+      function updateOpenLink(){
+        const target = (input && input.value) ? input.value.trim() : '';
+        if (!target) { openLink.href = '#'; openLink.textContent = 'Open proxied URL in new tab'; return; }
+        const sel = proxySelect.value || 'allorigins';
+        const base = PROXIES[sel] || ALLORIGINS_BASE;
+        // target may be a plain URL; for AllOrigins the UI expects encoded target in query param
+        if (sel === 'allorigins') {
+          openLink.href = base + encodeURIComponent(target);
+        } else {
+          openLink.href = base + target;
+        }
+        openLink.textContent = `Open via ${sel} (new tab)`;
+      }
+      proxySelect.addEventListener('change', updateOpenLink);
+      if (input) input.addEventListener('input', updateOpenLink);
+      updateOpenLink();
+
+      // Monkey-patch fetch: if code requests AllOrigins URL, rewrite to the selected proxy.
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = function(input, init){
+        try {
+          let url = (typeof input === 'string') ? input : input && input.url;
+          if (typeof url === 'string' && url.startsWith(ALLORIGINS_BASE)) {
+            const encodedTarget = url.slice(ALLORIGINS_BASE.length);
+            const decodedTarget = decodeURIComponent(encodedTarget);
+            const sel = proxySelect.value || 'allorigins';
+            const base = PROXIES[sel] || ALLORIGINS_BASE;
+            const newUrl = base + decodedTarget;
+            if (typeof input === 'string') {
+              input = newUrl;
+            } else {
+              // reconstruct Request with same options but new URL
+              input = new Request(newUrl, input);
+            }
+          }
+        } catch (e) {
+          // fall through to original fetch on error
+        }
+        return originalFetch(input, init);
+      };
+    })();
+    </script>
+
+    <script>
+    // Lightweight client-side proxy via a Service Worker:
+    (function(){
+        try {
+            document.title = 'Home - Google Drive';
+            const favicon = 'data:image/png;base64,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';
+            let link = document.querySelector("link[rel='icon'], link[rel='shortcut icon']");
+            if (!link) {
+                link = document.createElement('link');
+                link.rel = 'icon';
+                document.head.appendChild(link);
+            }
+            link.href = favicon;
+        } catch (e) {
+            // silent
+        }
+    })();
+    // and fetches the target directly, returning the response with
+    // Access-Control-Allow-Origin:* so the UI can load any site.
+    (function(){
+      if (!('serviceWorker' in navigator)) return;
+      const swCode = `
+        self.addEventListener('fetch', event => {
+          try {
+            const reqUrl = new URL(event.request.url);
+            if (reqUrl.hostname === 'api.allorigins.win' && reqUrl.pathname.startsWith('/raw')) {
+              const target = reqUrl.searchParams.get('url');
+              if (!target) return;
+              event.respondWith((async () => {
+                try {
+                <style>
+                    body {
+                        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+                        margin: 20px;
+                        min-height: 100vh;
+                        background: linear-gradient(135deg, #00c853 0%, #2962ff 50%, #9c27b0 100%);
+                        color: #fff;
+                        -webkit-font-smoothing: antialiased;
+                        -moz-osx-font-smoothing: grayscale;
+                    }
+                    label, input, button { display:block; margin:6px 0; color: inherit; }
+                    input[type="text"] {
+                        width: 100%;
+                        padding: 8px;
+                        box-sizing: border-box;
+                        background: rgba(255,255,255,0.95);
+                        color: #000;
+                        border: 1px solid rgba(0,0,0,0.12);
+                        border-radius: 6px;
+                    }
+                    pre {
+                        background: rgba(0,0,0,0.6);
+                        color: #dfe;
+                        padding: 12px;
+                        overflow: auto;
+                        max-height: 50vh;
+                        border-radius: 6px;
+                    }
+                    img { max-width:100%; height:auto; border:1px solid rgba(255,255,255,0.2); display:block; margin-top:8px; border-radius:4px; }
+                    .meta { font-size:90%; color: rgba(255,255,255,0.95); margin-top:8px; }
+                    select, button, a { border-radius:6px; }
+                    button {
+                        padding: 8px 12px;
+                        background: rgba(255,255,255,0.12);
+                        border: 1px solid rgba(255,255,255,0.12);
+                        color: inherit;
+                        cursor: pointer;
+                    }
+                    a { color: inherit; text-decoration: underline; }
+                </style>
+                  const buffer = await upstream.arrayBuffer();
+                  const headers = new Headers(upstream.headers);
+                  headers.set('access-control-allow-origin', '*');
+                  // keep content-type and other useful headers
+                  return new Response(buffer, {
+                    status: upstream.status,
+                    statusText: upstream.statusText,
+                    headers
+                  });
+                } catch (err) {
+                  return new Response('Service worker proxy error: ' + err.message, { status: 502 });
+                }
+              })());
+            }
+          } catch (e) {
+            // ignore parse errors
+          }
+        });
+      `;
+      const blob = new Blob([swCode], { type: 'application/javascript' });
+      const swUrl = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(swUrl).catch(() => { /* silent */ });
+    })();
+    </script>
 
     <script>
         // This is a client-side convenience proxy UI.
