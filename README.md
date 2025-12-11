@@ -1,2 +1,3 @@
 I think how to use this is pretty self explanatory...
-WARNING: This code cannot run on standard issue school chromebooks
+~~WARNING: This code cannot run on standard issue school chromebooks~~
+Chromebooks are being tested.
