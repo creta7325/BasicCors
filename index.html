@@ -9,13 +9,446 @@
         label, input, button { display:block; margin:6px 0; }
         input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
         pre { background:#000000; color:rgb(255, 255, 255); padding:12px; overflow:auto; max-height:50vh; }
+        body {
+          background: linear-gradient(135deg, #2af2ca 0%, #44df7d 50%, #2a83e9 100%);
+          background-attachment: fixed;
+        }
         img { max-width:100%; height:auto; border:1px solid #ccc; display:block; margin-top:8px; }
         .meta { font-size:90%; color:#555; margin-top:8px; }
     </style>
 </head>
 <body>
     <h1>A Simple CORS Proxy By Creta7325 and GitHub Copilot</h1>
-    <p>made around 5:52 pm on Tuesday Dec. 9th 2025</p>
+    <p>original made around 5:52 pm on Tuesday Dec. 9th 2025</p>
+
+    <div style="margin-top:12px; padding:10px; background:rgba(255,255,255,0.9); border-radius:8px;">
+      <label><input type="checkbox" id="interactiveToggle" /> Interactive browsing (use sites inside the proxy)</label>
+
+      <div id="browserControls" style="display:none; margin-top:8px;">
+      <button id="backBtn" type="button">◀ Back</button>
+      <button id="forwardBtn" type="button">Forward ▶</button>
+      <button id="reloadBtn" type="button">⟳ Reload</button>
+      <input id="frameAddress" type="text" style="width:60%; display:inline-block; margin-left:8px;" />
+      <button id="goFrame" type="button">Go</button>
+      </div>
+
+      <div id="browserWrap" style="margin-top:8px; display:none; border:1px solid rgba(0,0,0,0.08); border-radius:6px; overflow:hidden;">
+      <iframe id="browserFrame" style="width:100%; height:60vh; border:0; display:block;" title="Interactive proxied site"></iframe>
+      </div>
+    </div>
+
+    <script>
+    (function(){
+      // local proxy mapping (mirrors page options)
+      const PROXIES = {
+      allorigins: 'https://api.allorigins.win/raw?url=',
+      'cors-anywhere': 'https://cors-anywhere.herokuapp.com/',
+      thingproxy: 'https://thingproxy.freeboard.io/fetch/',
+      codetabs: 'https://api.codetabs.com/v1/proxy?quest=',
+      bridged: 'https://cors.bridged.cc/'
+      };
+
+      const interactiveToggle = document.getElementById('interactiveToggle');
+      const browserControls = document.getElementById('browserControls');
+      const browserWrap = document.getElementById('browserWrap');
+      const browserFrame = document.getElementById('browserFrame');
+      const frameAddress = document.getElementById('frameAddress');
+      const backBtn = document.getElementById('backBtn');
+      const forwardBtn = document.getElementById('forwardBtn');
+      const reloadBtn = document.getElementById('reloadBtn');
+      const goFrame = document.getElementById('goFrame');
+      const proxySelect = document.getElementById('proxySelect');
+
+      let historyStack = [];
+      let historyPos = -1;
+      let isNavigatingProgrammatically = false;
+
+      function selectedProxyBase(){
+      const sel = (proxySelect && proxySelect.value) || 'allorigins';
+      return PROXIES[sel] || PROXIES.allorigins;
+      }
+
+      function setControlsVisible(visible){
+      browserControls.style.display = visible ? 'block' : 'none';
+      browserWrap.style.display = visible ? 'block' : 'none';
+      }
+
+      interactiveToggle.addEventListener('change', e => {
+      setControlsVisible(interactiveToggle.checked);
+      });
+
+      // keep iframe aware when user changes proxy selection
+      try {
+        proxySelect && proxySelect.addEventListener && proxySelect.addEventListener('change', function(){
+          try { if (browserFrame && browserFrame.contentWindow) browserFrame.contentWindow.postMessage({type:'proxy-base', base: selectedProxyBase()}, '*'); } catch(e){}
+        });
+      } catch(e){}
+
+      // helper: proxify absolute URL using selected proxy base
+      function proxifyAbsolute(absUrl){
+      const base = selectedProxyBase();
+      // For AllOrigins we must encode param; other proxies often accept raw URL suffix
+      if (base.includes('allorigins')) return base + encodeURIComponent(absUrl);
+      return base + absUrl;
+      }
+
+      // fetch target HTML via currently selected proxy, rewrite resources to go through the proxy,
+      // inject a small sandbox script that forwards navigation and rewrites fetch/XHR in-page.
+      async function loadInteractive(url, opts={push:true}){
+      if (!url) return;
+      try {
+        // normalize simple urls without scheme
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        frameAddress.value = url;
+        const proxyUrl = proxifyAbsolute(url);
+
+        const res = await fetch(proxyUrl);
+        const text = await res.text();
+
+        // Parse and rewrite DOM
+        // Build a small URL browser UI so the user can pick discovered links to populate the main input
+        const linkFinderParser = new DOMParser();
+        const linkFinderDoc = linkFinderParser.parseFromString(text, 'text/html');
+
+        // collect and resolve hrefs
+        const rawHrefs = Array.from(linkFinderDoc.querySelectorAll('a[href]'))
+          .map(a => a.getAttribute('href') || '')
+          .filter(Boolean);
+        const absHrefs = [];
+        for (const h of rawHrefs) {
+          try {
+            const abs = new URL(h, url).href;
+            if (!absHrefs.includes(abs)) absHrefs.push(abs);
+          } catch (e) { /* ignore invalid URLs */ }
+        }
+
+        // create or update a simple "url browser" panel next to the main URL input
+        try {
+          const mainInput = document.getElementById('url');
+          let urlBrowser = document.getElementById('urlBrowser');
+          if (!urlBrowser) {
+            urlBrowser = document.createElement('div');
+            urlBrowser.id = 'urlBrowser';
+            urlBrowser.style.marginTop = '8px';
+            urlBrowser.style.padding = '8px';
+            urlBrowser.style.background = 'rgba(0,0,0,0.04)';
+            urlBrowser.style.borderRadius = '6px';
+            urlBrowser.style.maxHeight = '220px';
+            urlBrowser.style.overflow = 'auto';
+            urlBrowser.style.fontSize = '90%';
+            mainInput.parentNode.insertBefore(urlBrowser, mainInput.nextSibling);
+          } else {
+            urlBrowser.innerHTML = '';
+          }
+
+          const header = document.createElement('div');
+          header.textContent = 'Discovered links (click to fill input, double-click to open interactively)';
+          header.style.marginBottom = '6px';
+          header.style.color = '#222';
+          urlBrowser.appendChild(header);
+
+          if (absHrefs.length === 0) {
+            const none = document.createElement('div');
+            none.textContent = 'No links found on this page.';
+            none.style.color = '#666';
+            urlBrowser.appendChild(none);
+          } else {
+            const list = document.createElement('ul');
+            list.style.listStyle = 'none';
+            list.style.padding = '0';
+            list.style.margin = '0';
+            list.style.display = 'grid';
+            list.style.rowGap = '4px';
+            // limit to a reasonable number
+            for (const h of absHrefs.slice(0, 200)) {
+              const li = document.createElement('li');
+              const a = document.createElement('a');
+              a.href = '#';
+              a.textContent = h;
+              a.title = h;
+              a.style.display = 'block';
+              a.style.overflow = 'hidden';
+              a.style.textOverflow = 'ellipsis';
+              a.style.whiteSpace = 'nowrap';
+              a.style.color = '#0366d6';
+              a.style.cursor = 'pointer';
+              a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          try { mainInput.value = h; mainInput.focus(); } catch (e) {}
+              });
+              a.addEventListener('dblclick', (ev) => {
+          ev.preventDefault();
+          try { loadInteractive(h); } catch (e) {}
+              });
+              li.appendChild(a);
+              list.appendChild(li);
+            }
+            urlBrowser.appendChild(list);
+          }
+        } catch (e) {
+          // UI update failures should not block proxying
+        }
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+
+        // ensure a base to resolve relative URLs
+        const baseEl = doc.querySelector('base') || doc.createElement('base');
+        baseEl.setAttribute('href', url);
+        if (!doc.head) doc.documentElement.insertBefore(doc.createElement('head'), doc.body || null);
+        doc.head.insertBefore(baseEl, doc.head.firstChild);
+
+        // remove any CSP meta tags so our injected inline script can run
+        try {
+          const cspMeta = doc.querySelectorAll('meta[http-equiv="Content-Security-Policy"], meta[name="content-security-policy"]');
+          for (const m of cspMeta) m.parentNode && m.parentNode.removeChild(m);
+        } catch (e) {}
+
+        // Inject script that overrides fetch/XHR and forwards navigation/form submissions to parent
+        const injector = doc.createElement('script');
+        injector.textContent = `
+        (function(){
+          // parent-side proxy base (kept in sync with parent when frame is created)
+          // use `let` so the parent can update it via postMessage after the frame loads
+          let PARENT_PROXY_BASE = '${selectedProxyBase()}';
+          // allow parent to update the proxy base dynamically
+          window.addEventListener('message', function(evt){
+            try{
+              const m = evt.data || {};
+              if (m && m.type === 'proxy-base' && typeof m.base === 'string') {
+                PARENT_PROXY_BASE = m.base;
+              }
+            }catch(e){}
+          });
+          function proxify(u){
+          try{
+            const abs = new URL(u, location.href).href;
+            return PARENT_PROXY_BASE.includes('allorigins') ? PARENT_PROXY_BASE + encodeURIComponent(abs) : PARENT_PROXY_BASE + abs;
+          }catch(e){
+            return u;
+          }
+          }
+          // override fetch
+          const _fetch = window.fetch.bind(window);
+          window.fetch = function(input, init){
+          try{
+            if (typeof input === 'string' && /^https?:\\/\\//i.test(input)) input = proxify(input);
+            else if (input && input.url && typeof input.url === 'string' && /^https?:\\/\\//i.test(input.url)){
+            input = new Request(proxify(input.url), input);
+            }
+          }catch(e){}
+          return _fetch(input, init);
+          };
+          // override XHR open
+          const XHROp = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open = function(method, url){
+          try{
+            if (typeof url === 'string' && /^https?:\\/\\//i.test(url)) arguments[1] = proxify(url);
+          }catch(e){}
+          return XHROp.apply(this, arguments);
+          };
+          // intercept clicks on anchors and forward to parent to load via proxy
+          document.addEventListener('click', function(evt){
+          const a = evt.target.closest('a');
+          if (!a) return;
+          const href = a.getAttribute('href') || '';
+          // only intercept navigations to http(s) resources or same-document navigations
+          if (/^https?:\\/\\//i.test(href) || (href && !href.startsWith('#') && !href.startsWith('javascript:'))){
+            evt.preventDefault();
+            window.parent.postMessage({type:'interactive-navigate', url: new URL(href, location.href).href}, '*');
+          }
+          }, true);
+          // intercept form submissions and forward to parent (parent will perform proxied submit)
+          document.addEventListener('submit', function(evt){
+          const form = evt.target;
+          try{
+            evt.preventDefault();
+            const action = form.getAttribute('action') || location.href;
+            const method = (form.getAttribute('method') || 'GET').toUpperCase();
+            const fd = new FormData(form);
+            const params = new URLSearchParams();
+            for (const [k,v] of fd) params.append(k, v);
+            window.parent.postMessage({
+            type: 'interactive-form',
+            url: new URL(action, location.href).href,
+            method,
+            body: params.toString()
+            }, '*');
+          }catch(e){}
+          }, true);
+          // intercept window.open to open in proxy frame instead
+          const _open = window.open;
+          window.open = function(url, target, features){
+          if (!url) return _open.apply(this, arguments);
+          try{
+            window.parent.postMessage({type:'interactive-navigate', url: new URL(url, location.href).href, newWindow:true}, '*');
+            return null;
+          }catch(e){
+            return _open.apply(this, arguments);
+          }
+          };
+        })();
+        `;
+        // place injector as first script in head so it runs before other scripts when srcdoc executes
+        doc.head.insertBefore(injector, doc.head.firstChild);
+
+        // rewrite resource URLs: src, href (for link), action (forms), poster, data-src, srcset
+        const attrs = ['src','href','action','poster','data-src','srcset'];
+        const elements = doc.querySelectorAll('*');
+        for (const el of elements){
+        for (const a of attrs){
+          if (!el.hasAttribute || !el.hasAttribute(a)) continue;
+          try {
+          let val = el.getAttribute(a);
+          if (!val) continue;
+          // keep anchors with mailto:, tel:, javascript:, # alone
+          if (a === 'href' && (/^(mailto|tel|javascript):/i.test(val) || val.startsWith('#'))) continue;
+          // srcset needs special handling
+          if (a === 'srcset'){
+            const parts = val.split(',');
+            const rebuilt = parts.map(p=>{
+            const [u, descriptor] = p.trim().split(/\s+/);
+            try { const abs = new URL(u, url).href; return (selectedProxyBase().includes('allorigins') ? selectedProxyBase() + encodeURIComponent(abs) : selectedProxyBase() + abs) + (descriptor?(' '+descriptor):''); } catch(e){ return p; }
+            }).join(', ');
+            el.setAttribute('srcset', rebuilt);
+            continue;
+          }
+          // resolve absolute
+          const absUrl = new URL(val, url).href;
+          const proxied = proxifyAbsolute(absUrl);
+          el.setAttribute(a, proxied);
+          } catch(e){}
+        }
+        // rewrite inline style url(...) patterns
+        try {
+          if (el.style && el.style.cssText && /url\\(/i.test(el.style.cssText)){
+          el.style.cssText = el.style.cssText.replace(/url\\(([^)]+)\\)/g, function(_, g){
+            const raw = g.replace(/['"]/g,'').trim();
+            try { const abs = new URL(raw, url).href; return 'url(' + (selectedProxyBase().includes('allorigins') ? selectedProxyBase() + encodeURIComponent(abs) : selectedProxyBase() + abs) + ')'; } catch(e){ return 'url(' + raw + ')'; }
+          });
+          }
+        } catch(e){}
+        }
+
+        // Serialize doc to string for srcdoc
+        const serializer = new XMLSerializer();
+        let serialized = '<!doctype html>\\n' + serializer.serializeToString(doc);
+        // Set iframe srcdoc (this will run scripts in the injected page)
+        isNavigatingProgrammatically = true;
+        browserFrame.srcdoc = serialized;
+        // notify the srcdoc frame about the current proxy base so injected overrides use it
+        setTimeout(function(){
+          try { browserFrame.contentWindow.postMessage({type:'proxy-base', base: selectedProxyBase()}, '*'); } catch(e){}
+        }, 50);
+        if (opts.push){
+        // manage simple history
+        historyStack = historyStack.slice(0, historyPos+1);
+        historyStack.push(url);
+        historyPos = historyStack.length - 1;
+        }
+      } catch (err){
+        console.error('Interactive load error', err);
+        alert('Failed to load interactive page: ' + err.message);
+      } finally {
+        isNavigatingProgrammatically = false;
+        updateNavButtons();
+      }
+      }
+
+      function updateNavButtons(){
+      backBtn.disabled = historyPos <= 0;
+            browserFrame.srcdoc = '<!doctype html>\\n' + serializer.serializeToString(doc);
+            // inform the new srcdoc of the proxy base
+            setTimeout(function(){ try { browserFrame.contentWindow.postMessage({type:'proxy-base', base: selectedProxyBase()}, '*'); } catch(e){} }, 50);
+      }
+
+      backBtn.addEventListener('click', () => {
+      if (historyPos <= 0) return;
+      historyPos--;
+      loadInteractive(historyStack[historyPos], {push:false});
+      });
+      forwardBtn.addEventListener('click', () => {
+      if (historyPos >= historyStack.length - 1) return;
+      historyPos++;
+      loadInteractive(historyStack[historyPos], {push:false});
+      });
+      reloadBtn.addEventListener('click', () => {
+      if (historyPos < 0) return;
+      loadInteractive(historyStack[historyPos], {push:false});
+      });
+      goFrame.addEventListener('click', () => {
+      const u = frameAddress.value.trim();
+      if (!u) return;
+      loadInteractive(u, {push:true});
+      });
+
+      // If user clicks the main "Fetch via proxy" button and interactive mode is ON,
+      // intercept that click to open interactive view instead of the existing handler.
+      const mainGo = document.getElementById('go');
+      if (mainGo){
+      mainGo.addEventListener('click', function(evt){
+        if (!interactiveToggle.checked) return;
+        // prevent the later handler (registered in original script) from running
+        evt.stopImmediatePropagation();
+        const mainInput = document.getElementById('url');
+        const target = mainInput && mainInput.value.trim();
+        if (!target) return alert('Enter a target URL.');
+        loadInteractive(target);
+      }, true);
+      }
+
+      // Listen to messages from iframe injector for navigation/form submits
+      window.addEventListener('message', async (ev) => {
+      try {
+        const msg = ev.data || {};
+        if (msg && msg.type === 'interactive-navigate' && msg.url){
+        loadInteractive(msg.url, {push:true});
+        } else if (msg && msg.type === 'interactive-form'){
+        // perform proxied submission (simple handling)
+        const target = msg.url;
+        const method = (msg.method || 'GET').toUpperCase();
+        const body = msg.body || '';
+        const proxyUrl = proxifyAbsolute(target);
+        let fetchOpts = { method };
+        if (method === 'POST') {
+          fetchOpts.headers = { 'content-type': 'application/x-www-form-urlencoded' };
+          fetchOpts.body = body;
+        } else if (method === 'GET' && body){
+          // append params to URL
+          const join = proxyUrl.includes('?') ? '&' : '?';
+          const realTarget = target + (target.includes('?') ? '&' : '?') + body;
+          const resolved = proxifyAbsolute(new URL(realTarget).href);
+          // load resulting page
+          loadInteractive(new URL(realTarget).href, {push:true});
+          return;
+        }
+        // For POST we fetch and load response HTML into frame
+        try {
+          const r = await fetch(proxyUrl, fetchOpts);
+          const t = await r.text();
+          // reuse loadInteractive logic by setting frame srcdoc directly
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(t, 'text/html');
+          const baseEl = doc.querySelector('base') || doc.createElement('base');
+          baseEl.setAttribute('href', target);
+          doc.head.insertBefore(baseEl, doc.head.firstChild);
+          const serializer = new XMLSerializer();
+          browserFrame.srcdoc = '<!doctype html>\\n' + serializer.serializeToString(doc);
+          // inform the new srcdoc of the proxy base
+          setTimeout(function(){ try { browserFrame.contentWindow.postMessage({type:'proxy-base', base: selectedProxyBase()}, '*'); } catch(e){} }, 50);
+        }catch(e){
+          alert('Form submission failed: ' + e.message);
+        }
+        }
+      }catch(e){}
+      });
+
+      // expose a helper so the frame injector can call parent directly (same-origin), optionally used by srcdoc pages
+      window.__interactiveNavigate = (url) => { loadInteractive(url, {push:true}); };
+
+      // initial visibility
+      setControlsVisible(false);
+    })();
+    </script>
 
     <label for="url">Target URL</label>
     <input id="url" type="text" placeholder="https://example.com/path" />
@@ -130,50 +563,12 @@
               if (!target) return;
               event.respondWith((async () => {
                 try {
-                <style>
-                    body {
-                        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
-                        margin: 20px;
-                        min-height: 100vh;
-                        background: linear-gradient(135deg, #00c853 0%, #2962ff 50%, #9c27b0 100%);
-                        color: #fff;
-                        -webkit-font-smoothing: antialiased;
-                        -moz-osx-font-smoothing: grayscale;
-                    }
-                    label, input, button { display:block; margin:6px 0; color: inherit; }
-                    input[type="text"] {
-                        width: 100%;
-                        padding: 8px;
-                        box-sizing: border-box;
-                        background: rgba(255,255,255,0.95);
-                        color: #000;
-                        border: 1px solid rgba(0,0,0,0.12);
-                        border-radius: 6px;
-                    }
-                    pre {
-                        background: rgba(0,0,0,0.6);
-                        color: #dfe;
-                        padding: 12px;
-                        overflow: auto;
-                        max-height: 50vh;
-                        border-radius: 6px;
-                    }
-                    img { max-width:100%; height:auto; border:1px solid rgba(255,255,255,0.2); display:block; margin-top:8px; border-radius:4px; }
-                    .meta { font-size:90%; color: rgba(255,255,255,0.95); margin-top:8px; }
-                    select, button, a { border-radius:6px; }
-                    button {
-                        padding: 8px 12px;
-                        background: rgba(255,255,255,0.12);
-                        border: 1px solid rgba(255,255,255,0.12);
-                        color: inherit;
-                        cursor: pointer;
-                    }
-                    a { color: inherit; text-decoration: underline; }
-                </style>
+                  const upstream = await fetch(target, { mode: 'cors' });
                   const buffer = await upstream.arrayBuffer();
                   const headers = new Headers(upstream.headers);
                   headers.set('access-control-allow-origin', '*');
-                  // keep content-type and other useful headers
+                  headers.delete('content-security-policy');
+                  headers.delete('x-frame-options');
                   return new Response(buffer, {
                     status: upstream.status,
                     statusText: upstream.statusText,
